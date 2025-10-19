@@ -1,52 +1,93 @@
-// server.js
-import express from "express";
-import mongoose from "mongoose";
-import cors from "cors";
-import multer from "multer";
-import path from "path";
-import dotenv from "dotenv";
-
-dotenv.config();
+const express = require("express");
+const mongoose = require("mongoose");
+const cors = require("cors");
+const bodyParser = require("body-parser");
+const fs = require("fs");
+const path = require("path");
 
 const app = express();
+const PORT = process.env.PORT || 5000;
+
+// ==============================
+// Middleware
+// ==============================
 app.use(cors());
-app.use(express.json());
-app.use("/uploads", express.static("uploads"));
+app.use(bodyParser.json({ limit: "10mb" }));
 
-// MongoDB connection
+// ==============================
+// Create uploads folder
+// ==============================
+const uploadDir = path.join(__dirname, "uploads");
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
+
+// ==============================
+// Serve static uploads folder
+// ==============================
+app.use("/uploads", express.static(uploadDir));
+
+// ==============================
+// MongoDB Connection
+// ==============================
+const mongoURI =
+  process.env.MONGODB_URI ||
+  "mongodb+srv://welcome:welcomeji1@selfie.exrykey.mongodb.net/selfieDB?retryWrites=true&w=majority";
+
 mongoose
-  .connect(process.env.MONGO_URI)
+  .connect(mongoURI, { useNewUrlParser: true, useUnifiedTopology: true })
   .then(() => console.log("✅ MongoDB connected"))
-  .catch((err) => console.log("❌ MongoDB Error:", err));
+  .catch((err) => console.error("❌ MongoDB error:", err));
 
-// Schema
+// ==============================
+// Schema & Model
+// ==============================
 const selfieSchema = new mongoose.Schema({
   filePath: String,
   timestamp: { type: Date, default: Date.now },
 });
-
 const Selfie = mongoose.model("Selfie", selfieSchema);
 
-// Multer setup for file uploads
-const storage = multer.diskStorage({
-  destination: "uploads/",
-  filename: (req, file, cb) => {
-    cb(null, "selfie_" + Date.now() + path.extname(file.originalname));
-  },
-});
-const upload = multer({ storage });
-
+// ==============================
 // Routes
-app.post("/upload", upload.single("selfie"), async (req, res) => {
-  const selfie = new Selfie({ filePath: `/uploads/${req.file.filename}` });
-  await selfie.save();
-  res.json({ message: "Uploaded successfully", selfie });
+// ==============================
+
+// Home route
+app.get("/", (req, res) => {
+  res.send("📸 Selfie API Running!");
 });
 
+// Upload selfie
+app.post("/upload", async (req, res) => {
+  try {
+    const { image } = req.body;
+    if (!image) return res.status(400).json({ error: "No image provided" });
+
+    const base64Data = image.replace(/^data:image\/png;base64,/, "");
+    const fileName = `selfie_${Date.now()}.png`;
+    const filePath = path.join(uploadDir, fileName);
+    fs.writeFileSync(filePath, base64Data, "base64");
+
+    const selfie = new Selfie({ filePath: `/uploads/${fileName}` });
+    await selfie.save();
+
+    res.json({ message: "✅ Selfie saved", filePath: `/uploads/${fileName}` });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// Get all selfies
 app.get("/selfies", async (req, res) => {
-  const selfies = await Selfie.find().sort({ timestamp: -1 });
-  res.json(selfies);
+  try {
+    const selfies = await Selfie.find().sort({ timestamp: -1 });
+    res.json(selfies);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error" });
+  }
 });
 
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+// ==============================
+// Start server
+// ==============================
+app.listen(PORT, () => console.log(`🚀 Backend running on port ${PORT}`));
